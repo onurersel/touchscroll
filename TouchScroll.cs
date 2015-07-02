@@ -4,7 +4,6 @@ using System.Collections;
 [RequireComponent(typeof(Camera))]
 public class TouchScroll : MonoBehaviour {
 
-
 	//enums
 	private enum InputState { Down, Up}
 	public enum Axis { XAndY, XOnly, YOnly }
@@ -20,6 +19,23 @@ public class TouchScroll : MonoBehaviour {
 	public float drag = 0.06f;
 	public Axis axis = Axis.XAndY;
 	public bool autoEnable = true;
+
+
+	//limits
+	public bool doLimitHorizontal;
+	public float limitLeft;
+	public float limitRight;
+	public bool doLimitVertical;
+	public float limitTop;
+	public float limitBottom;
+	[Range(0f, 1f)]
+	public float bouncePower = 0.16f;
+	[Range(0f, .3f)]
+	public float offLimitFriction = 0.18f;
+
+	//passed values from touch detection
+	private Vector2 m_oldPos;
+	private float m_oldTime;
 	
 
 
@@ -101,23 +117,28 @@ public class TouchScroll : MonoBehaviour {
 	{
 		while (true)
 		{
-			if(m_inputState == InputState.Down)
+			if(m_inputState == InputState.Down) 
 				break;
 
 			yield return null;
 		}
+
+		m_oldPos = m_cursorWorldPosition;
+		m_oldTime = Time.time;
 	}
 
 	// While touching, detects velocity, moves camera with touch.move and limits camera movement.
 	private IEnumerator c_CalculateVelocity()
 	{
-		Vector2 oldPos = m_cursorWorldPosition;
+		Vector2 oldPos = m_oldPos;
 		Vector2 calculatedVelocity = Vector2.zero;
-		float oldTime = Time.time;
+		Vector2 oldCalculatedVelocity = Vector2.zero;
+		float oldTime = m_oldTime;
 
 		while (m_inputState == InputState.Down)
 		{
 			float now = Time.time;
+
 			float elapsed = now - oldTime;
 			Vector2 pos = m_cursorWorldPosition;
 			Vector2 deltaPos = pos - oldPos;
@@ -130,10 +151,18 @@ public class TouchScroll : MonoBehaviour {
 			Vector2 curVelocity = deltaPos / (1f+elapsed);
 			calculatedVelocity = 0.8f*curVelocity + 0.2f*calculatedVelocity;
 
-			transform.position -= new Vector3(deltaPos.x, deltaPos.y);
+			if(calculatedVelocity.magnitude < oldCalculatedVelocity.magnitude)
+				calculatedVelocity = Vector2.Lerp(oldCalculatedVelocity, calculatedVelocity, .5f);
+
+			Vector3 deltaPos3 = new Vector3(deltaPos.x, deltaPos.y);
+
+			LimitBoundsWhileDragging(ref deltaPos3);
+
+			transform.position -= deltaPos3;
 
 			oldTime = now;
 			oldPos = m_cursorWorldPosition;
+			oldCalculatedVelocity = calculatedVelocity;
 
 			yield return null;
 		}
@@ -151,12 +180,15 @@ public class TouchScroll : MonoBehaviour {
 			float now = Time.time;
 			float elapsed = now - oldTime;
 
-			m_velocity = m_velocity * Mathf.Exp(-elapsed / 1f-drag);
+			float dragMultiplier = Mathf.Exp(-elapsed / 1f-drag);
+			m_velocity *= dragMultiplier;
 
 			transform.position -= m_velocity;
 
 			oldTime = now;
 
+			if(doLimitHorizontal  ||  doLimitVertical)
+				LimitBoundsWhileDrifting(ref m_velocity, dragMultiplier);
 
 			yield return new WaitForFixedUpdate();
 		}
@@ -184,8 +216,66 @@ public class TouchScroll : MonoBehaviour {
 
 		StopAllCoroutines();
 	}
+	
 
-	//TODO limit bounds
-	//TODO bounce on hitting bounds
+	//Limit bounds after touch ended
+	private void LimitBoundsWhileDrifting(ref Vector3 velocity, float dragMultiplier)
+	{
+		bool didChanged = false;
+		Vector3 pos = transform.position;
+		
+		if(doLimitVertical)
+		{
+			if(pos.y > limitTop) {
+				didChanged = true;
+				pos.y = limitTop;
+			}
+			if(pos.y < limitBottom) {
+				didChanged = true;
+				pos.y = limitBottom;
+			}
+		}
+		if(doLimitHorizontal)
+		{
+			if(pos.x > limitRight) {
+				didChanged = true;
+				pos.x = limitRight;
+			}
+			if(pos.x < limitLeft) {
+				didChanged = true;
+				pos.x = limitLeft;
+			}
+		}
+		
+		if(didChanged)
+		{
+			velocity *= dragMultiplier;
+			transform.position = Vector3.Lerp(transform.position, pos, bouncePower);
+		}
+			
+
+	}
+	
+	//makes harder to scroll away from bounds while dragging
+	private void LimitBoundsWhileDragging(ref Vector3 deltaPos)
+	{
+		Vector3 nextPos = transform.position - deltaPos;
+
+		if(nextPos.y > limitTop)
+			deltaPos.y = Mathf.Lerp(deltaPos.y, 0f, (nextPos.y-limitTop)*offLimitFriction);
+
+		if(nextPos.y < limitBottom)
+			deltaPos.y = Mathf.Lerp(deltaPos.y, 0f, (limitBottom-nextPos.y)*offLimitFriction);
+
+		if(nextPos.x > limitRight)
+			deltaPos.x = Mathf.Lerp(deltaPos.x, 0f, (nextPos.x-limitRight)*offLimitFriction);
+		
+		if(nextPos.x < limitLeft)
+			deltaPos.x = Mathf.Lerp(deltaPos.x, 0f, (limitLeft-nextPos.x)*offLimitFriction);
+	}
+
+
 	//TODO movement events
+	//TODO multitouch bug
+	//TODO parameter documentation
 }
